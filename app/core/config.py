@@ -1,7 +1,3 @@
-# ──────────────────────────────────────────────
-#  finbot — Core Configuration
-# ──────────────────────────────────────────────
-
 # PostgreSQL
 FINANCIAL_DB_URI = "postgresql+psycopg2://stockdata:pass4321@192.168.155.22:5446/stockdb"
 

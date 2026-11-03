@@ -8,39 +8,28 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import APP_TITLE, APP_VERSION
-from app.core.database import check_db_connection
+from app.core.database import check_db_connection, get_stockdb_schema
 from app.services.llm import check_ollama
 from app.api.chat import router as chat_router
 from app.api.export import router as export_router
 
-# ── App Init ───────────────────────────────────
-
+# App Init
 app = FastAPI(
     title=APP_TITLE,
     version=APP_VERSION,
     description="Bangladesh OMS Financial Analysis Chatbot — powered by Ollama + PostgreSQL",
 )
 
-# ── CORS (open — R&D project, no auth) ─────────
+# CORS (open — R&D project, no auth)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ── Routers ────────────────────────────────────
-
+# Routers
 app.include_router(chat_router,   prefix="/chat",   tags=["Chat"])
 app.include_router(export_router, prefix="/export",  tags=["Export"])
 
-# ── Static Files (frontend) ────────────────────
-
+# Static Files (frontend)
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
-
-# ── Health Check ───────────────────────────────
 
 @app.get("/health", tags=["System"])
 async def health():
@@ -54,10 +43,11 @@ async def health():
         "ollama": "ok" if ollama_ok else "error",
     })
 
+@app.get("/schema", tags=["System"])
+async def schema():
+    return JSONResponse(content={"status": 'Success', "schema": get_stockdb_schema()})
 
-# ── Root → Serve Chat UI ───────────────────────
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Serve the chat UI at root URL."""
     return FileResponse("frontend/index.html")
