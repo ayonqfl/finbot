@@ -1,14 +1,31 @@
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # PostgreSQL
-FINANCIAL_DB_URI = "postgresql+psycopg2://stockdata:pass4321@192.168.155.22:5446/stockdb"
+FINANCIAL_DB_URI = os.getenv("FINANCIAL_DB_URI", "")
 
-# Ollama
-OLLAMA_BASE_URL = "http://localhost:11434"
-PRIMARY_MODEL   = "deepseek-r1:latest"
-FALLBACK_MODEL  = "llama3.2:latest"
+# Google Gemini Settings
+BASE_URL = os.getenv(
+    "GEMINI_BASE_URL",
+    "https://generativelanguage.googleapis.com/v1beta",
+)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+GEMINI_FALLBACK_MODEL = os.getenv(
+    "GEMINI_FALLBACK_MODEL",
+    "gemini-3.5-flash-lite",
+)
 
-# Report output directory (relative to project root)
+# Primary model alias for backwards compatibility
+PRIMARY_MODEL = GEMINI_MODEL
+FALLBACK_MODEL = GEMINI_FALLBACK_MODEL
+
+# Report output directory
 REPORTS_DIR = "reports"
 
 # App
-APP_TITLE   = "finbot — OMS Financial Chatbot"
+APP_TITLE = "finbot — OMS Financial Chatbot"
 APP_VERSION = "1.0.0"

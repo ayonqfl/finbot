@@ -1,6 +1,4 @@
-# ──────────────────────────────────────────────
 #  finbot — Report Generator (PDF + CSV)
-# ──────────────────────────────────────────────
 
 import os
 import pandas as pd
@@ -23,8 +21,7 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-# ── CSV ────────────────────────────────────────
-
+# CSV
 def generate_csv(data: list[dict], symbol: str, report_type: str) -> str:
     """
     Generate a CSV file from list of dicts.
@@ -37,8 +34,7 @@ def generate_csv(data: list[dict], symbol: str, report_type: str) -> str:
     return filepath
 
 
-# ── PDF ────────────────────────────────────────
-
+#PDF
 # Brand colours
 BRAND_DARK  = colors.HexColor("#0d1117")
 BRAND_BLUE  = colors.HexColor("#1e6fff")

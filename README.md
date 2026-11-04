@@ -120,14 +120,15 @@ pip install -r requirements.txt
 
 ### 4. Configure Environment
 
-Review or adjust database and model settings in `app/core/config.py`:
-```python
-FINANCIAL_DB_URI = "postgresql+psycopg2://user:password@host:port/stockdb"
-OLLAMA_BASE_URL  = "http://localhost:11434"
-PRIMARY_MODEL    = "deepseek-r1:latest"
-FALLBACK_MODEL   = "llama3.2:latest"
-REPORTS_DIR      = "reports"
+Create a `.env` file in the project root (it is ignored by Git) and set your own credentials:
+```dotenv
+FINANCIAL_DB_URI=postgresql://user:password@host:port/stockdb
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
 ```
+
+Do not commit `.env` or paste credentials into source files.
 
 ### 5. Run the Application
 

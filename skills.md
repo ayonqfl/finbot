@@ -3,7 +3,7 @@
 > **Bangladesh OMS Financial Analysis Chatbot**  
 > Stack: FastAPI · LangChain · Ollama · PostgreSQL · Bootstrap 5 · jQuery  
 > Author workspace: `g:\practice-codes\finbot`  
-> DB URI: `postgresql+psycopg2://stockdata:pass4321@192.168.155.22:5446/stockdb`
+> DB URI: configured via FINANCIAL_DB_URI environment variable
 
 ---
 
@@ -100,7 +100,7 @@ finbot/
 ## 🗄️ Database Schema Reference
 
 All tables live in the `stockdb` database, schema `public`.  
-**DB URI:** `postgresql+psycopg2://stockdata:pass4321@192.168.155.22:5446/stockdb`
+**DB URI: configured via FINANCIAL_DB_URI environment variable
 
 ---
 
@@ -542,12 +542,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - FINANCIAL_DB_URI=postgresql+psycopg2://stockdata:pass4321@192.168.155.22:5446/stockdb
+      - FINANCIAL_DB_URI=${FINANCIAL_DB_URI}
       - OLLAMA_BASE_URL=http://localhost:11434
     volumes:
       - ./reports:/app/reports
-
-  # PostgreSQL is on 192.168.155.22:5446 (external — no container needed)
+  # PostgreSQL is external — no container needed
   # Ollama runs on host machine — no container needed for dev
 ```
 
@@ -568,6 +567,7 @@ mkdir reports
 
 # 4. Start FastAPI dev server
 uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --reload-delay 0.5 --port 1100
 
 # 5. Open browser at
 # http://localhost:8000

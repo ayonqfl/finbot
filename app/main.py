@@ -1,6 +1,4 @@
-# ──────────────────────────────────────────────
 #  finbot — FastAPI Application Entry Point
-# ──────────────────────────────────────────────
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -9,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import APP_TITLE, APP_VERSION
 from app.core.database import check_db_connection, get_stockdb_schema
-from app.services.llm import check_ollama
+from app.services.llm import check_llm
 from app.api.chat import router as chat_router
 from app.api.export import router as export_router
 
@@ -33,14 +31,14 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 @app.get("/health", tags=["System"])
 async def health():
-    """Check DB and Ollama connectivity."""
-    db_ok     = check_db_connection()
-    ollama_ok = await check_ollama()
-    status    = "ok" if (db_ok and ollama_ok) else "degraded"
+    db_ok  = check_db_connection()
+    llm_ok = await check_llm()
+    status = "ok" if (db_ok and llm_ok) else "degraded"
+
     return JSONResponse(content={
-        "status": status,
-        "db":     "ok" if db_ok else "error",
-        "ollama": "ok" if ollama_ok else "error",
+        "db":       "ok" if db_ok else "error",
+        "llm":      "ok" if llm_ok else "error",
+        "status": status
     })
 
 @app.get("/schema", tags=["System"])

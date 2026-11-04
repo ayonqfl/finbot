@@ -88,8 +88,8 @@ function handleAgentResponse(res) {
 
     case 'ask_format':
       /* Agent wants to know: PDF or CSV? */
-      pendingExport = { symbol: res.symbol, data_type: res.data_type };
-      appendFormatPicker(res.content, res.symbol, res.data_type);
+      pendingExport = { symbol: res.symbol, data_type: res.data_type, sql: res.sql };
+      appendFormatPicker(res.content, res.symbol, res.data_type, res.sql);
       break;
 
     case 'text':
@@ -108,20 +108,24 @@ function handleAgentResponse(res) {
 /* ════════════════════════════════════════════
    FORMAT PICKER (PDF / CSV choice)
 ════════════════════════════════════════════ */
-function appendFormatPicker(message, symbol, dataType) {
+function appendFormatPicker(message, symbol, dataType, sql) {
   const time = nowTime();
+  const formattedText = formatMarkdown(message);
+  window._lastReportSql = sql || '';
+  const cleanSymbol = (symbol && symbol !== 'null' && symbol !== 'undefined') ? symbol : 'REPORT';
+  const cleanType = (dataType && dataType !== 'undefined') ? dataType : 'financial_report';
   const html = `
     <div class="msg-row bot-row" style="animation:msgSlideIn 0.3s ease">
       <div class="msg-avatar bot-avatar"><i class="bi bi-robot"></i></div>
       <div class="msg-bubble bot-bubble">
         <div class="msg-text">
-          ${escapeHtml(message)}
-          <div class="format-picker">
-            <button class="format-btn pdf-btn" onclick="chooseFormat('${symbol}','${dataType}','pdf')">
-              <i class="bi bi-file-earmark-pdf-fill"></i> PDF Report
+          ${formattedText}
+          <div class="format-picker mt-3">
+            <button class="format-btn pdf-btn" onclick="chooseFormat('${cleanSymbol}','${cleanType}','pdf')">
+              <i class="bi bi-file-earmark-pdf-fill"></i> Download PDF
             </button>
-            <button class="format-btn csv-btn" onclick="chooseFormat('${symbol}','${dataType}','csv')">
-              <i class="bi bi-filetype-csv"></i> CSV Export
+            <button class="format-btn csv-btn" onclick="chooseFormat('${cleanSymbol}','${cleanType}','csv')">
+              <i class="bi bi-filetype-csv"></i> Download CSV
             </button>
           </div>
         </div>
@@ -144,7 +148,13 @@ function chooseFormat(symbol, dataType, fmt) {
   setLoading(true);
 
   /* Trigger export */
-  const url = `/export/?symbol=${encodeURIComponent(symbol)}&data_type=${encodeURIComponent(dataType)}&fmt=${fmt}`;
+  let url = `/export/?symbol=${encodeURIComponent(symbol || '')}&fmt=${fmt}`;
+  if (window._lastReportSql) {
+    url += `&sql=${encodeURIComponent(window._lastReportSql)}`;
+  }
+  if (dataType && dataType !== 'undefined') {
+    url += `&data_type=${encodeURIComponent(dataType)}`;
+  }
 
   /* Check the export exists first with HEAD, then give download link */
   $.ajax({

@@ -1,37 +1,37 @@
-# ── Python ─────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.pyo
 
-# ── Virtual Environment ───────────────────
+#Virtual Environment
 venv/
 .venv/
 env/
 
-# ── Generated Reports ────────────────────
+# Generated Reports
 reports/
 
-# ── Test Files ───────────────────────────
+# Test Files
 test_chat.py
 
-# ── IDE / Editor ─────────────────────────
+# IDE / Editor
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# ── OS Files ─────────────────────────────
+# OS Files
 Thumbs.db
 Desktop.ini
 .DS_Store
 
-# ── Environment Variables ────────────────
+# Environment Variables
 .env
 .env.*
 
-# ── Distribution / Build ────────────────
+# Distribution / Build
 dist/
 build/
 *.egg-info/

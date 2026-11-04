@@ -1,210 +1,197 @@
-# ──────────────────────────────────────────────
-#  finbot — LangChain Agent
-#  Intent detection + DB tool routing
-# ──────────────────────────────────────────────
+#  finbot — Agent (Dynamic SQL Pipeline)
+#  Flow: user message → SQL generator → DB execute → LLM response formatter
 
-import re
 import json
-from app.services.llm import ask_ollama, stream_ollama, strip_think_tags
-from app.services import db_tools
-from app.core.config import PRIMARY_MODEL
+import re
 
-# ── System Prompt ──────────────────────────────
+from app.core.query_generator import generate_and_execute
+from app.services.llm import ask_llm
+from app.services.db_tools import symbol_exists
 
-SYSTEM_PROMPT = """You are finbot, a financial data assistant for the Bangladesh DSE (Dhaka Stock Exchange) OMS system.
+# System prompt for the *response formatter* step
+# (This is NOT the SQL-generation prompt — that lives in query_generator.py)
 
-RULES YOU MUST FOLLOW:
-1. You ONLY answer questions using data retrieved from the PostgreSQL database.
+_RESPONSE_SYSTEM_PROMPT = """\
+You are finbot, a friendly financial data assistant for the Bangladesh DSE \
+(Dhaka Stock Exchange) OMS system.
+
+RULES:
+1. You ONLY answer using the database data provided to you in this prompt.
 2. You NEVER recommend buying or selling any stock.
-3. You CAN explain financial metrics, show trends, compare years, and help users understand data.
-4. When a user asks for a report (PDF or CSV), you MUST ask which format they prefer — always.
-5. If a symbol is not found in the database, politely say so.
-6. Keep answers concise and data-focused.
-
-AVAILABLE DATA (via database):
-- LTP (Last Traded Price / yesterday_close)
-- PE ratio, NAV, Dividend Yield, Market Cap, Trailing PE
-- 52-week high/low
-- Dividend history (yearly: cash, stock, yield %)
-- Annual EPS history
-- Quarterly EPS (Q1/Q2/Q3/Q4)
-- Corporate events (dividend declarations, EPS announcements)
-- AGM dates, record dates
-
-RESPONSE FORMAT FOR SPECIAL ACTIONS:
-- If you need to ask for report format, respond EXACTLY with:
-  [ASK_FORMAT:SYMBOL:REPORT_TYPE]
-  Example: [ASK_FORMAT:PTL:dividend_history]
-- For normal answers, respond in plain friendly text.
-- Do NOT make up data. Only use what is provided to you in the context.
-
-SYMBOLS: Bangladesh DSE-listed stocks e.g. PTL, GP, BNIPLC, RENATA, WALTONHIL, SAMORITA, BSRMLTD etc.
+3. You CAN explain financial metrics, spot trends, compare values, and help \
+   users understand the numbers.
+4. Format numbers neatly (use commas for thousands, 2 decimal places for \
+   percentages and prices).
+5. If the data is empty, politely say no records were found.
+6. Keep your answer concise, accurate, and data-focused.
+7. Do NOT make up any numbers or facts not present in the data.
 """
 
-# ── Intent Detection ───────────────────────────
 
-REPORT_KEYWORDS = [
-    "report", "generate", "export", "download", "pdf", "csv",
-    "file", "create report", "make report"
-]
+def _build_response_prompt(user_message: str, sql: str, rows: list[dict]) -> str:
+    """Build the prompt that asks the LLM to narrate the query result."""
+    data_json = json.dumps(rows, default=str, indent=2)
+    row_count = len(rows)
+    return (
+        f"{_RESPONSE_SYSTEM_PROMPT}\n\n"
+        f"USER QUESTION: {user_message}\n\n"
+        f"SQL EXECUTED:\n{sql}\n\n"
+        f"RESULT ({row_count} row{'s' if row_count != 1 else ''}):\n{data_json}\n\n"
+        f"Please answer the user's question clearly using only the data above."
+    )
 
-DATA_TYPE_MAP = {
-    "dividend history": "dividend_history",
-    "dividend":         "dividend_history",
-    "eps":              "annual_eps",
-    "earnings":         "annual_eps",
-    "quarterly eps":    "quarterly_eps",
-    "quarterly":        "quarterly_eps",
-    "corporate event":  "corporate_events",
-    "event":            "corporate_events",
-    "fundamental":      "fundamentals",
-    "ltp":              "ltp",
-    "price":            "ltp",
+
+# Report intent detection
+_REPORT_KEYWORDS = frozenset(
+    ["report", "export", "download", "pdf", "csv", "file",
+     "create report", "make report", "generate report"]
+)
+
+
+def _wants_report(message: str) -> bool:
+    lower = message.lower()
+    return any(kw in lower for kw in _REPORT_KEYWORDS)
+
+
+# Symbol extractor (kept for report-intent path)
+_NOISE_WORDS: set[str] = {
+    "THE", "AND", "FOR", "ARE", "WAS", "CAN", "YOU", "ALL", "GET", "LET",
+    "ITS", "HIS", "HER", "OUR", "BUT", "NOT", "USE", "HAS", "HAD", "OR",
+    "OF", "TO", "IN", "IS", "IT", "BE", "AS", "AT", "SO", "WE", "DO",
+    "ME", "MY", "WHAT", "SHOW", "GIVE", "WANT", "FIND", "TELL", "LIST",
+    "LAST", "LATEST", "CHECK", "LOOK", "NEED", "MAKE", "SHOULD",
+    "WOULD", "COULD", "WILL", "FROM", "WITH", "THIS", "THAT", "THESE",
+    "THOSE", "HAVE", "BEEN", "ALSO", "JUST", "MORE", "SOME", "THEY",
+    "THEIR", "WERE", "WHEN", "THEN", "HERE", "THAN", "INTO", "OVER",
+    "AFTER", "UNDER", "LIKE", "ONLY", "ABOUT", "HIGH", "LOW", "WEEK",
+    "YEAR", "QUARTER", "ANNUAL", "MONTHLY", "QUARTERLY", "HISTORY",
+    "REPORT", "DATA", "INFO", "RATIO", "PRICE", "VALUE",
+    "CURRENT", "RECENT", "EPS", "LTP", "NAV", "BUY", "SELL", "STOCK",
+    "MARKET", "TRADE", "SHARE", "DIVIDEND", "CORPORATE", "EVENT",
+    "AGM", "PE", "DISPLAY", "FETCH", "PLEASE", "PDF", "CSV", "FILE",
+    "HELLO", "HI", "HEY", "GOOD", "MORNING", "EVENING", "AFTERNOON",
+    "HOW", "WHO", "WHY", "WHERE", "YES", "NO", "OK", "THANKS", "THANK",
+    "FINBOT", "BOT", "ASSISTANT", "HELP",
 }
 
 
-def extract_symbol(text: str) -> str | None:
+def _extract_symbol(text: str) -> str | None:
     """
-    Extract a DSE symbol from the user message.
-    Strategy:
-      1. First check if any word in the message exists as a symbol in DB.
-      2. If not found in DB, check for words written in ALL-CAPS by the user
-         that are not common English words (potential symbol not in DB).
-      3. Otherwise return None (general chat, greeting, or question without symbol).
+    Extract stock symbol from free text.
+    First checks database for valid symbols (case-insensitive),
+    then checks for user-typed ALL-CAPS words.
     """
-    noise = {
-        "THE","AND","FOR","ARE","WAS","CAN","YOU","ALL","GET","LET",
-        "ITS","HIS","HER","OUR","BUT","NOT","USE","HAS","HAD","OR",
-        "OF","TO","IN","IS","IT","BE","AS","AT","SO","WE","DO",
-        "ME","MY","WHAT","SHOW","GIVE","WANT","FIND","TELL","LIST",
-        "LAST","LATEST","CHECK","LOOK","NEED","MAKE","SHOULD",
-        "WOULD","COULD","WILL","FROM","WITH","THIS","THAT","THESE",
-        "THOSE","HAVE","BEEN","ALSO","JUST","MORE","SOME","THEY",
-        "THEIR","WERE","WHEN","THEN","HERE","THAN","INTO","OVER",
-        "AFTER","UNDER","LIKE","ONLY","ABOUT","HIGH","LOW","WEEK",
-        "YEAR","QUARTER","ANNUAL","MONTHLY","QUARTERLY","HISTORY",
-        "REPORT","DATA","INFO","RATIO","PRICE","VALUE",
-        "CURRENT","RECENT","EPS","LTP","NAV","BUY","SELL","STOCK",
-        "MARKET","TRADE","SHARE","DIVIDEND","CORPORATE","EVENT",
-        "AGM","PE","DISPLAY","FETCH","PLEASE","PDF","CSV","FILE",
-        "HELLO","HI","HEY","GOOD","MORNING","EVENING","AFTERNOON",
-        "HOW","WHO","WHY","WHERE","YES","NO","OK","THANKS","THANK",
-        "FINBOT","BOT","ASSISTANT","HELP",
-    }
-
-    # 1. Check all tokens (case-insensitive) against database
+    # 1. Check all tokens case-insensitively against database symbols
     tokens = re.findall(r'\b[A-Za-z0-9&]{2,12}\b', text)
     for t in tokens:
         upper_t = t.upper()
-        if upper_t not in noise and db_tools.symbol_exists(upper_t):
+        if upper_t not in _NOISE_WORDS and symbol_exists(upper_t):
             return upper_t
 
-    # 2. Check for tokens specifically typed in ALL-CAPS by the user (2+ chars)
-    raw_caps = re.findall(r'\b[A-Z0-9&]{2,10}\b', text)
-    caps_candidates = [c for c in raw_caps if c not in noise and not c.isdigit()]
-    if caps_candidates:
-        return caps_candidates[0]
-
+    # 2. Check for tokens specifically typed in ALL-CAPS by the user
+    caps = re.findall(r'\b[A-Z0-9&]{2,12}\b', text)
+    for c in caps:
+        if c not in _NOISE_WORDS and not c.isdigit():
+            return c
     return None
 
 
-def detect_report_intent(message: str) -> bool:
-    """Returns True if user wants a report/export."""
-    lower = message.lower()
-    return any(kw in lower for kw in REPORT_KEYWORDS)
+# General-chat fallback
+_GENERAL_SYSTEM_PROMPT = """\
+You are finbot, a friendly financial data assistant for the Bangladesh DSE \
+(Dhaka Stock Exchange) OMS system.
+
+If the user asks about a specific stock symbol, remind them to include the DSE \
+symbol (e.g. PTL, GP, RENATA). You can explain what data is available, greet \
+the user, or answer general finance questions — but never invent specific stock \
+numbers from your own knowledge.
+"""
 
 
-def detect_data_type(message: str) -> str:
-    """
-    Return the best matching data type from the message.
-    Sort by phrase length descending so longer phrases win
-    (e.g. 'quarterly eps' beats 'eps').
-    """
-    lower = message.lower()
-    for phrase in sorted(DATA_TYPE_MAP.keys(), key=len, reverse=True):
-        if phrase in lower:
-            return DATA_TYPE_MAP[phrase]
-    return "fundamentals"   # safe default
+async def _general_reply(user_message: str) -> str:
+    """LLM reply for messages that don't require a DB lookup."""
+    prompt = f"{_GENERAL_SYSTEM_PROMPT}\n\nUSER: {user_message}\n\nfinbot:"
+    try:
+        return await ask_llm(prompt)
+    except Exception as exc:
+        return f"Sorry, I'm having trouble reaching the AI model right now. ({exc})"
 
 
-# ── Data Fetcher ───────────────────────────────
-
-def fetch_data(symbol: str, data_type: str) -> tuple[list[dict] | dict | None, str]:
-    """
-    Fetch data from DB based on type.
-    Returns (data, human_label).
-    """
-    fetchers = {
-        "ltp":             (db_tools.get_ltp,                "LTP & Fundamentals"),
-        "fundamentals":    (db_tools.get_fundamentals,        "Fundamental Data"),
-        "dividend_history":(db_tools.get_dividend_history,    "Dividend History"),
-        "annual_eps":      (db_tools.get_annual_eps,          "Annual EPS"),
-        "quarterly_eps":   (db_tools.get_quarterly_eps,       "Quarterly EPS"),
-        "corporate_events":(db_tools.get_corporate_events,    "Corporate Events"),
-        "dividend_action": (db_tools.get_dividend_declaration,"Dividend Declaration"),
-    }
-    fn, label = fetchers.get(data_type, (db_tools.get_fundamentals, "Data"))
-    return fn(symbol), label
-
-
-# ── Main Agent ─────────────────────────────────
-
+# Main agent entry point
 async def run_agent(user_message: str) -> dict:
     """
-    Main agent entry point.
-    Returns a structured response dict:
-      { type, content, symbol, data_type, data, ask_format }
+    Dynamic agent pipeline.
+
+    Returns a structured dict:
+      { type, content, sql, rows, symbol, error, data_type }
     """
-    symbol    = extract_symbol(user_message)
-    data_type = detect_data_type(user_message)
-    wants_report = detect_report_intent(user_message)
+    symbol = _extract_symbol(user_message)
+    wants_report = _wants_report(user_message)
 
-    # ── Case 1: Report request — ask format first
-    if wants_report and symbol:
+    # If the user only says "report" or "download report" without a symbol and without detail:
+    if wants_report and not symbol and len(user_message.strip().split()) <= 3:
         return {
-            "type":      "ask_format",
-            "symbol":    symbol,
-            "data_type": data_type,
-            "content":   f"I can prepare the **{data_type.replace('_',' ').title()}** report for **{symbol}**. Which format would you like?",
+            "type": "text",
+            "content": "Sure! Which stock symbol would you like the report for? (e.g. AOL, GP, PTL, RENATA)",
         }
 
-    # ── Case 2: Data query — fetch from DB then ask LLM to explain
-    if symbol:
-        data, label = fetch_data(symbol, data_type)
-        if not data:
-            return {
-                "type":    "text",
-                "content": f"I couldn't find any **{label}** data for symbol **{symbol}** in the database. Please check the symbol name (e.g. PTL, GP, BNIPLC).",
-            }
+    # Execute dynamic query generation
+    result = await generate_and_execute(user_message)
 
-        # Build context for LLM
-        data_str = json.dumps(data, default=str, indent=2)
-        prompt = f"""{SYSTEM_PROMPT}
+    # 1. LLM said it cannot generate a SQL query → treat as general chat
+    if result.cannot_generate:
+        reply = await _general_reply(user_message)
+        return {"type": "text", "content": reply}
 
-USER QUESTION: {user_message}
-
-DATABASE DATA FOR {symbol} ({label}):
-{data_str}
-
-Please answer the user's question using only the data above. Be clear and concise.
-"""
-        answer = await ask_ollama(prompt, model=PRIMARY_MODEL)
+    # 2. Something went wrong (schema fetch, LLM, DB error)
+    if result.error:
         return {
-            "type":    "text",
+            "type": "error",
+            "content": f"⚠️ I ran into a problem: {result.error}",
+            "sql": result.sql or None,
+        }
+
+    # 3. Query returned no rows
+    if not result.rows:
+        return {
+            "type": "text",
+            "sql": result.sql,
+            "rows": [],
+            "content": (
+                "No records were found for your query. "
+                "Please double-check the symbol name or date range and try again.\n\n"
+                f"**SQL executed:**\n```sql\n{result.sql}\n```"
+            ),
+        }
+
+    # 4. Success — ask LLM to format a human-readable response
+    response_prompt = _build_response_prompt(user_message, result.sql, result.rows)
+    try:
+        answer = await ask_llm(response_prompt)
+    except Exception as exc:
+        answer = (
+            f"⚠️ AI response formatting failed ({exc}). "
+            "Here is the raw data:"
+        )
+
+    # Deduce symbol if not already extracted
+    final_symbol = symbol or (result.rows[0].get("symbol") if result.rows else "STOCK")
+
+    # If the user asked for a report, provide the report in chat AND format picker buttons
+    if wants_report:
+        return {
+            "type": "ask_format",
             "content": answer,
-            "symbol":  symbol,
-            "data":    data,
+            "symbol": final_symbol,
+            "data_type": "report",
+            "sql": result.sql,
+            "rows": result.rows,
         }
 
-    # ── Case 3: General chat (no symbol detected)
-    prompt = f"""{SYSTEM_PROMPT}
-
-USER MESSAGE: {user_message}
-
-Respond helpfully. If the user needs to specify a symbol, ask them politely.
-"""
-    answer = await ask_ollama(prompt, model=PRIMARY_MODEL)
     return {
-        "type":    "text",
+        "type": "text",
         "content": answer,
+        "symbol": final_symbol,
+        "sql": result.sql,
+        "rows": result.rows,
     }

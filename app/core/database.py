@@ -1,6 +1,4 @@
-# ──────────────────────────────────────────────
 #  finbot — Database Engine (SQLAlchemy)
-# ──────────────────────────────────────────────
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -8,10 +6,11 @@ from app.core.config import FINANCIAL_DB_URI
 
 engine = create_engine(
     FINANCIAL_DB_URI,
-    pool_pre_ping=True,      # reconnect on stale connections
+    pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
-    echo=False,              # set True for SQL debug logging
+    echo=False,
+    connect_args={"connect_timeout": 5}
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
