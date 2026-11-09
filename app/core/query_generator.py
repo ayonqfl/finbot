@@ -18,9 +18,6 @@ _FORBIDDEN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Max rows returned to avoid flooding the LLM context
-MAX_ROWS = 200
-
 # Schema cache (defined before validator so get_allowed_tables() is available)
 
 _schema_cache: dict | None = None
@@ -60,8 +57,12 @@ RULES:
 1. Output ONLY the raw SQL query — no markdown, no code fences, no explanation.
 2. Always use the `public` schema prefix: e.g. `public.basic_info`.
 3. Never use INSERT, UPDATE, DELETE, DROP, TRUNCATE, ALTER, CREATE, or any mutating statement.
-4. Add `LIMIT 200` unless the user asks for a specific smaller limit.
-5. If the user mentions a stock symbol, filter with `WHERE symbol = 'SYMBOL'` using UPPER-CASE.
+4. NO LIMIT CLAUSE BY DEFAULT:
+   - NEVER add a LIMIT clause unless the user explicitly requested a specific number of records (e.g. 'top 5', 'limit 10', 'highest 3').
+   - Return all matching rows across the database.
+5. SYMBOL FILTERING (CRITICAL):
+   - SPECIFIC SYMBOL: If the user explicitly asks about a specific stock symbol (e.g. 'PTL', 'GP', 'AOL', 'RENATA'), filter strictly using `WHERE symbol = 'SYMBOL'` in UPPER-CASE.
+   - ALL SYMBOLS / NO SYMBOL: If the user asks for 'all symbols', 'all stocks', 'entire market', 'all companies', or does NOT mention a specific stock ticker, DO NOT filter by symbol. NEVER invent, pick, or default to any arbitrary symbol (such as AAMRANET, GP, etc.). Query the requested data for ALL symbols across the market.
 6. For cross-table queries, use JOINs on the `symbol` column.
 7. Use meaningful column aliases so the result is human-readable.
 8. If the question cannot be answered with a SELECT query or is unrelated to finance, output exactly: CANNOT_GENERATE
@@ -211,7 +212,7 @@ validate_sql = _validate_sql
 class QueryResult:
     """Container returned by generate_and_execute."""
 
-    __slots__ = ("sql", "rows", "error", "cannot_generate")
+    __slots__ = ("sql", "rows", "error", "cannot_generate", "total_rows")
 
     def __init__(
         self,
@@ -219,11 +220,13 @@ class QueryResult:
         rows: list[dict] | None = None,
         error: str | None = None,
         cannot_generate: bool = False,
+        total_rows: int = 0,
     ):
         self.sql = sql
         self.rows = rows or []
         self.error = error
         self.cannot_generate = cannot_generate
+        self.total_rows = total_rows
 
     @property
     def ok(self) -> bool:
@@ -262,6 +265,9 @@ async def generate_and_execute(user_message: str) -> QueryResult:
     if not ok:
         return QueryResult(sql=sql, error=reason)
 
+    # Debug: print the generated SQL (server-side only — never sent to the client)
+    print(f"[QueryGen] Generated SQL:\n{sql}")
+
     # Step 4 — execute (with one auto-retry on DB error)
     rows, db_error = execute_raw_sql(sql)
     if db_error:
@@ -281,11 +287,16 @@ async def generate_and_execute(user_message: str) -> QueryResult:
         if not ok2:
             return QueryResult(sql=retry_sql, error=reason2)
 
+        print(f"[QueryGen] Retry SQL:\n{retry_sql}")
         rows, db_error2 = execute_raw_sql(retry_sql)
         if db_error2:
             # Both attempts failed — return the retry SQL and its error
             return QueryResult(sql=retry_sql, error=db_error2)
 
-        return QueryResult(sql=retry_sql, rows=rows)
+        total = len(rows)
+        print(f"[QueryGen] Retry succeeded: {total} rows returned")
+        return QueryResult(sql=retry_sql, rows=rows, total_rows=total)
 
-    return QueryResult(sql=sql, rows=rows)
+    total = len(rows)
+    print(f"[QueryGen] Success: {total} rows returned")
+    return QueryResult(sql=sql, rows=rows, total_rows=total)
