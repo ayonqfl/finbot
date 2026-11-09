@@ -1,4 +1,4 @@
-# 🤖 finbot — Bangladesh DSE Financial Assistant
+# 🤖 finbot — Bangladesh Financial Assistant
 
 > **AI-Powered Financial Data & Report Chatbot for the Bangladesh OMS Trading System**  
 > Built with FastAPI, PostgreSQL, Ollama (DeepSeek-R1 / LLaMA 3.2), ReportLab, and Bootstrap 5.
@@ -30,76 +30,89 @@ Users land directly into the chat interface without login barriers, ask plain-En
 
 ---
 
+## 🎯 System Workflow
+
+```text
+User message
+    ↓
+agent.py → run_agent()
+    ├─ _extract_symbol()   — DB-validated symbol lookup
+    ├─ _wants_report()     — keyword detection
+    │
+    └─ generate_and_execute()   [query_generator.py]
+           ├─ get_schema_cached()          — schema fetched once, cached in memory
+           ├─ ask_llm(sql_prompt)          — Gemini generates SQL
+           ├─ _extract_sql() + _validate_sql()
+           ├─ execute_raw_sql()            — SQLAlchemy runs the query
+           └─ retry once if DB error      — LLM given error to self-correct
+    │
+    ├─ cannot_generate → _general_reply() (Gemini general chat)
+    ├─ error           → { type: "error", content, sql }
+    ├─ no rows         → { type: "text", content: "No records..." }
+    ├─ wants_report    → { type: "ask_format", symbol, sql, rows }
+    └─ success         → { type: "text", content (LLM-formatted answer), sql, rows }
+```
+---
+
 ## 🏗️ Architecture & Project Structure
 
 ```text
 finbot/
-├── app/
-│   ├── api/
-│   │   ├── chat.py           # POST /chat/ — chat request handler
-│   │   └── export.py         # GET /export/ — PDF/CSV file download endpoint
-│   ├── core/
-│   │   ├── config.py         # App configuration, DB URI, Ollama parameters
-│   │   └── database.py       # SQLAlchemy engine, session maker, connection check
-│   ├── models/
-│   │   └── financial.py      # Pydantic schemas (ChatRequest, BasicInfo, etc.)
-│   ├── services/
-│   │   ├── agent.py          # Intent detection, DB-validated ticker extractor & routing
-│   │   ├── db_tools.py       # Parameterized SQL query functions for 6 DSE tables
-│   │   ├── llm.py            # Ollama API wrapper with automatic model fallback
-│   │   └── report.py         # ReportLab (PDF) & Pandas (CSV) generators
-│   └── main.py               # FastAPI app assembly, CORS, static file mount
+│
+├── app/                             # FastAPI application package
+│   ├── __init__.py
+│   ├── main.py                      # App entry point, router registration, CORS
+│   │
+│   ├── api/                         # Route handlers
+│   │   ├── __init__.py
+│   │   ├── chat.py                  # POST /chat/ → JSONResponse
+│   │   └── export.py                # GET  /export/ → FileResponse (PDF/CSV)
+│   │
+│   ├── core/                        # Config & shared dependencies
+│   │   ├── __init__.py
+│   │   ├── .env                     # ← Environment variables (DB URI, Gemini settings)
+│   │   ├── config.py                # Loads .env, exports all settings as constants
+│   │   ├── database.py              # SQLAlchemy engine + schema fetcher
+│   │   └── query_generator.py       # Dynamic SQL pipeline (LLM→SQL→Execute)
+│   │
+│   ├── services/                    # Business logic
+│   │   ├── __init__.py
+│   │   ├── agent.py                 # Intent detection & pipeline orchestration
+│   │   ├── llm.py                   # Gemini HTTP client (ask_llm, check_llm)
+│   │   ├── db_tools.py              # Only: symbol_exists() — static queries removed
+│   │   └── report.py                # CSV (pandas) and PDF (ReportLab) generators
+│   │
+│   └── models/                      # Pydantic schemas
+│       ├── __init__.py
+│       └── financial.py             # ChatRequest, ChatResponse, etc.
 │
 ├── frontend/
+│   ├── index.html                   # Main chat UI (Bootstrap 5 dark theme)
 │   ├── css/
-│   │   └── styles.css        # Glassmorphism dark theme UI
-│   ├── js/
-│   │   └── chat.js           # Chat UI interaction, format picker & download handler
-│   └── index.html            # Main web interface
+│   │   └── styles.css               # Glassmorphism dark mode + animations
+│   └── js/
+│       └── chat.js                  # jQuery — JSON response handling, download buttons
 │
-├── reports/                  # Generated PDF & CSV files directory
-├── sql/
-│   └── schema_reference.sql  # DDL reference for stock database tables
-├── .gitignore
+├── sql/                             # Reference SQL / DDL (not executed at startup)
 ├── requirements.txt
+├── skills.md
 └── README.md
 ```
 
 ---
 
-## 🗄️ Database Tables Used
-
-All data is queried read-only from PostgreSQL (`stockdb`):
-
-| Table Name | Description | Key Data |
-|---|---|---|
-| `basic_info` | Core stock fundamentals | LTP (`yesterday_close`), P/E, NAV, Market Cap, 52W High/Low |
-| `dividend_history` | Historical dividend records | Year, Cash %, Stock %, Yield % |
-| `financial_annual` | Annual EPS records | Fiscal year, Annual EPS |
-| `financial_quarterly` | Quarterly earnings records | Quarter (Q1-Q4), Period date, EPS |
-| `corporate_event` | Corporate action events | Declaration date, news type, actual value, impact |
-| `dividend_corp_action` | Declared corporate actions | Dividend rate, record date, AGM date |
-
----
-
 ## 🚀 Quick Start Guide
 
-### 1. Prerequisites
+### Prerequisites
 
 - **Python**: 3.10+ (tested on Python 3.12)
-- **Ollama**: Installed and running locally
+- **LLM**: API KEY from LLM
 - **PostgreSQL**: Accessible instance with `stockdb` schema
 
-### 2. Pull Ollama Models
 
-Make sure Ollama is running and download the models:
-```bash
-ollama serve
-ollama pull deepseek-r1:latest
-ollama pull llama3.2:latest
 ```
 
-### 3. Setup Virtual Environment
+### Setup Virtual Environment
 
 ```bash
 # Clone or navigate to the project directory
@@ -118,26 +131,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment
-
-Create a `.env` file in the project root (it is ignored by Git) and set your own credentials:
-```dotenv
-FINANCIAL_DB_URI=postgresql://user:password@host:port/stockdb
-GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-3.1-flash-lite
-GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
-```
-
 Do not commit `.env` or paste credentials into source files.
 
-### 5. Run the Application
+### Run the Application
 
 ```bash
 uvicorn app.main:app --port 8000 --reload
 ```
-
-Open your browser and navigate to:
-👉 **[http://localhost:8000](http://localhost:8000)**
 
 ---
 
