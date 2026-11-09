@@ -6,8 +6,8 @@ import logging
 
 from app.core.config import (
     GEMINI_API_KEY,
-    GEMINI_FALLBACK_MODEL,
-    GEMINI_MODEL,
+    PRIMARY_MODEL,
+    FALLBACK_MODEL,
     BASE_URL,
 )
 
@@ -47,20 +47,20 @@ def _extract_text(data: dict) -> str:
 
 
 async def ask_llm(prompt: str) -> str:
-    model = GEMINI_MODEL
+    model = PRIMARY_MODEL
 
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             response = await _generate(client, model, prompt)
 
-            if response.status_code in (404, 429, 503) and model != GEMINI_FALLBACK_MODEL:
+            if response.status_code in (404, 429, 503) and model != FALLBACK_MODEL:
                 logger.warning(
                     "Gemini model '%s' returned HTTP %s, falling back to '%s'",
                     model,
                     response.status_code,
-                    GEMINI_FALLBACK_MODEL,
+                    FALLBACK_MODEL,
                 )
-                model = GEMINI_FALLBACK_MODEL
+                model = FALLBACK_MODEL
                 response = await _generate(client, model, prompt)
 
             response.raise_for_status()

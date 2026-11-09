@@ -4,13 +4,20 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from app.core.config import FINANCIAL_DB_URI
 
+# Guard against an empty database URL – this would raise an obscure SQLAlchemy error.
+if not FINANCIAL_DB_URI:
+    raise RuntimeError(
+        "FINANCIAL_DB_URI is not set. Provide a valid PostgreSQL URL via the environment "
+        "or update `app/core/config.py` with a default."
+    )
+
 engine = create_engine(
     FINANCIAL_DB_URI,
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
     echo=False,
-    connect_args={"connect_timeout": 5}
+    connect_args={"connect_timeout": 5},
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
