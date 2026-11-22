@@ -204,8 +204,7 @@ def _detect_report_topic(sql: str) -> str:
 
 # General-chat fallback
 _GENERAL_SYSTEM_PROMPT = """\
-You are finbot, a friendly financial data assistant for the Bangladesh DSE \
-(Dhaka Stock Exchange) OMS system.
+You are finbot, a friendly financial data assistant for the Bangladesh Stock Exchange OMS system.
 
 If the user asks about a specific stock symbol, remind them to include the DSE \
 symbol (e.g. PTL, GP, RENATA). You can explain what data is available, greet \
