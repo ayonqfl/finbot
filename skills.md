@@ -368,11 +368,6 @@ httpx==0.27.2
 
 # Utilities
 python-dotenv==1.0.1
-
-# Unused (kept for compatibility — may be removed)
-langchain==0.3.0
-langchain-community==0.3.0
-langchain-ollama==0.2.0
 ```
 
 ---
