@@ -1,0 +1,14 @@
+services:
+  finbot:
+    build:
+      context: .
+    ports:
+      - "1100:1100"
+    env_file:
+      - ./app/core/.env
+    volumes:
+      - finbot-reports:/app/reports
+    restart: unless-stopped
+
+volumes:
+  finbot-reports:

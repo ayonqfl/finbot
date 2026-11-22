@@ -1,0 +1,13 @@
+.git
+.agents
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.pyo
+*.swp
+*.swo
+**/.env
+**/.env.*
+reports

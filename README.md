@@ -139,6 +139,18 @@ Do not commit `.env` or paste credentials into source files.
 uvicorn app.main:app --port 8000 --reload
 ```
 
+### Run with Docker Compose
+
+1. Copy `app/core/.env.example` to `app/core/.env` and set your PostgreSQL and Gemini values.
+2. If PostgreSQL runs on your host machine, keep `host.docker.internal` in the database URL instead of using `localhost`. Otherwise, use a hostname reachable from the container.
+3. Build and start finbot:
+
+```bash
+docker compose up --build
+```
+
+Open [http://localhost:8000](http://localhost:8000). Generated reports are stored in the `finbot-reports` Docker volume. The PostgreSQL database is external and must already be running with the required schema.
+
 ---
 
 ## 🔌 API Endpoints
