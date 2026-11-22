@@ -36,11 +36,11 @@ function checkHealth() {
   $.get('/health')
     .done(function (data) {
       setStatusDot('#dbDot',     '#dbLabel',     data.db,     'DB');
-      setStatusDot('#ollamaDot', '#ollamaLabel', data.ollama, 'LLM');
+      setStatusDot('#LLMDot', '#LLMLabel', data.llm, 'LLM');
     })
     .fail(function () {
       setStatusDot('#dbDot',     '#dbLabel',     'error', 'DB');
-      setStatusDot('#ollamaDot', '#ollamaLabel', 'error', 'LLM');
+      setStatusDot('#LLMDot', '#LLMLabel', 'error', 'LLM');
     });
 }
 
@@ -61,23 +61,157 @@ function sendMessage() {
   appendUserMsg(text);
   $('#msgInput').val('').css('height', 'auto');
   setLoading(true);
+  startSSEChat(text);
+}
 
-  $.ajax({
-    url: '/chat/',
-    type: 'POST',
-    contentType: 'application/json',
-    data: JSON.stringify({ message: text }),
-    success: function (res) {
-      handleAgentResponse(res);
-    },
-    error: function (xhr) {
-      const err = xhr.responseJSON?.content || 'Something went wrong. Please try again.';
-      appendBotMsg(err, 'error');
-    },
-    complete: function () {
-      setLoading(false);
+async function startSSEChat(text) {
+  const statusBubble = createProgressBubble();
+  let streamedBubble = null;
+  let streamedText = '';
+  let currentEvent = '';
+
+  try {
+    const response = await fetch('/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status})`);
     }
-  });
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let separatorIndex;
+      while ((separatorIndex = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        currentEvent = '';
+        let dataLine = '';
+
+        frame.split(/\r?\n/).forEach(function (line) {
+          if (line.startsWith('event:')) currentEvent = line.slice(6).trim();
+          if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+        });
+
+        if (!dataLine) continue;
+
+        let eventData;
+        try {
+          eventData = JSON.parse(dataLine);
+        } catch (_) {
+          continue;
+        }
+
+        if (currentEvent === 'chunk') {
+          if (!streamedBubble) streamedBubble = statusBubble;
+          streamedText += eventData.content || '';
+          updateStreamingBotBubble(streamedBubble, streamedText);
+        } else if (currentEvent === 'status') {
+          updateSSEStatus(statusBubble, eventData.status);
+        } else if (currentEvent === 'response') {
+          if (eventData.response_type === 'error') {
+            replaceProgressBubble(statusBubble, eventData.content, 'error');
+          } else if (eventData.response_type === 'ask_format') {
+            streamedBubble = streamedBubble || statusBubble;
+            clearProgressStatus(streamedBubble);
+            appendFormatControlsToBubble(
+              streamedBubble,
+              eventData.symbol,
+              eventData.data_type,
+              eventData.report_id
+            );
+          } else if (eventData.content) {
+            streamedBubble = streamedBubble || statusBubble;
+            replaceProgressBubble(streamedBubble, eventData.content);
+          }
+        } else if (currentEvent === 'error') {
+          replaceProgressBubble(statusBubble, eventData.content || 'Something went wrong. Please try again.', 'error');
+        }
+      }
+    }
+  } catch (error) {
+    replaceProgressBubble(statusBubble, error.message || 'Something went wrong. Please try again.', 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+function createProgressBubble() {
+  const time = nowTime();
+  const html = `
+    <div class="msg-row bot-row progress-row">
+      <div class="msg-avatar bot-avatar"><i class="bi bi-robot"></i></div>
+      <div class="msg-bubble bot-bubble">
+        <div class="msg-text progress-bubble">
+          <span class="progress-spinner"></span>
+          <span class="progress-label">Thinking...</span>
+        </div>
+        <div class="msg-time">${time}</div>
+      </div>
+    </div>`;
+  $('#chatMessages').append(html);
+  const bubble = $('#chatMessages .bot-row').last()[0];
+  scrollToBottom();
+  return bubble;
+}
+
+function updateStreamingBotBubble(bubble, text) {
+  $(bubble).removeClass('progress-row');
+  $(bubble).find('.msg-text').removeClass('progress-bubble');
+  $(bubble).find('.msg-text').html(formatMarkdown(text));
+  scrollToBottom();
+}
+
+function clearProgressStatus(bubble) {
+  $(bubble).removeClass('progress-row');
+  $(bubble).find('.msg-text').removeClass('progress-bubble').empty();
+}
+
+function replaceProgressBubble(bubble, text, type = '') {
+  $(bubble).removeClass('progress-row');
+  $(bubble).find('.msg-bubble').toggleClass('error-bubble', type === 'error');
+  $(bubble).find('.msg-text').removeClass('progress-bubble').html(formatMarkdown(text));
+  scrollToBottom();
+}
+
+function updateSSEStatus(bubble, status) {
+  const labels = {
+    thinking: 'Thinking...',
+    extracting_symbol: 'Finding...',
+    generating_sql: 'Generating...',
+    executing_query: 'Running...',
+    completed: ''
+  };
+  const label = labels[status];
+  if (label) {
+    $(bubble).find('.progress-label').text(label);
+  }
+  scrollToBottom();
+}
+
+function appendFormatControlsToBubble(bubble, symbol, dataType, reportId) {
+  const cleanSymbol = (symbol && symbol !== 'null' && symbol !== 'undefined') ? symbol : 'ALL';
+  const cleanType = (dataType && dataType !== 'undefined') ? dataType : 'financial_report';
+  const rId = reportId || '';
+  $(bubble).find('.msg-text').append(`
+    <div class="format-picker mt-3">
+      <button class="format-btn pdf-btn" onclick="chooseFormat('${cleanSymbol}','${cleanType}','pdf','${rId}')">
+        <i class="bi bi-file-earmark-pdf-fill"></i> Download PDF
+      </button>
+      <button class="format-btn csv-btn" onclick="chooseFormat('${cleanSymbol}','${cleanType}','csv','${rId}')">
+        <i class="bi bi-filetype-csv"></i> Download CSV
+      </button>
+    </div>`);
+  scrollToBottom();
 }
 
 /* ════════════════════════════════════════════
@@ -251,11 +385,7 @@ function appendBotMsg(text, type = '', noAvatar = false) {
 function setLoading(state) {
   isBusy = state;
   $('#sendBtn').prop('disabled', state);
-  if (state) {
-    $('#typingIndicator').removeClass('d-none');
-  } else {
-    $('#typingIndicator').addClass('d-none');
-  }
+  $('#typingIndicator').addClass('d-none');
 }
 
 function scrollToBottom() {

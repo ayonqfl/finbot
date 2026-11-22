@@ -3,6 +3,7 @@
 
 import re
 import json
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from datetime import date, datetime
 
@@ -233,7 +234,10 @@ class QueryResult:
         return not self.error and not self.cannot_generate
 
 
-async def generate_and_execute(user_message: str) -> QueryResult:
+async def generate_and_execute(
+    user_message: str,
+    status_callback: Callable[[str], Awaitable[None]] | None = None,
+) -> QueryResult:
     """
     Full pipeline:
       1. Fetch schema (cached)
@@ -249,6 +253,8 @@ async def generate_and_execute(user_message: str) -> QueryResult:
         return QueryResult(error=str(exc))
 
     # Step 2 — LLM generates SQL
+    if status_callback:
+        await status_callback("generating_sql")
     prompt = _build_sql_prompt(user_message, schema)
     try:
         raw_response = await ask_llm(prompt)
@@ -269,9 +275,13 @@ async def generate_and_execute(user_message: str) -> QueryResult:
     print(f"[QueryGen] Generated SQL:\n{sql}")
 
     # Step 4 — execute (with one auto-retry on DB error)
+    if status_callback:
+        await status_callback("executing_query")
     rows, db_error = execute_raw_sql(sql)
     if db_error:
         print(f"[QueryGen] First SQL attempt failed: {db_error}\nSQL: {sql}\nRetrying...")
+        if status_callback:
+            await status_callback("executing_query")
         retry_prompt = _build_retry_prompt(user_message, schema, sql, db_error)
         try:
             raw_retry = await ask_llm(retry_prompt)

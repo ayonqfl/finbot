@@ -13,7 +13,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    type: str           # "token" | "ask_format" | "report_ready" | "error"
+    type: str           # "chunk" | "status" | "response" | "ask_format" | "error"
     content: str        # the text token or message
     symbol: Optional[str] = None
     url: Optional[str] = None
