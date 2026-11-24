@@ -30,6 +30,7 @@ RULES:
 7. Do NOT make up any numbers or facts not present in the data.
 8. If the data covers ALL symbols or a large dataset, provide a clear, structured \
    overview of the findings (mention total record count, key highlights, top performers, etc.).
+9. Always put a normal space between separate words; never concatenate adjacent words.
 """
 
 
@@ -206,6 +207,7 @@ def _detect_report_topic(sql: str) -> str:
 _GENERAL_SYSTEM_PROMPT = """\
 You are finbot, a friendly financial data assistant for the Bangladesh Stock Exchange OMS system.
 
+Always put a normal space between separate words; never concatenate adjacent words.
 If the user asks about a specific stock symbol, remind them to include the DSE \
 symbol (e.g. PTL, GP, RENATA). You can explain what data is available, greet \
 the user, or answer general finance questions — but never invent specific stock \

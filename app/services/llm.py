@@ -37,15 +37,15 @@ async def _generate(client: httpx.AsyncClient, model: str, prompt: str) -> httpx
     )
 
 
-def _extract_text(data: dict) -> str:
+def _extract_text(data: dict, *, strip_whitespace: bool = True) -> str:
     candidates = data.get("candidates") or []
     if not candidates:
         return ""
 
     parts = candidates[0].get("content", {}).get("parts", [])
     text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    return text
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    return text.strip() if strip_whitespace else text
 
 
 async def ask_llm(prompt: str) -> str:
@@ -99,7 +99,7 @@ async def ask_llm_stream(prompt: str) -> AsyncIterator[str]:
                     data = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
-                text = _extract_text(data)
+                text = _extract_text(data, strip_whitespace=False)
                 if text:
                     yield text
 
